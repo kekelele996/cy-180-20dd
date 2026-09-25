@@ -1,14 +1,17 @@
-// 采访工作台：选择项目 → 按问题录音 → 自动关联 → 一句话摘要 → 时间轴标注。
+// 采访工作台：选择项目 → 按问题录音 → 自动关联 → 一句话摘要提交审核 → 时间轴标注。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import AudioPlayer from '../../components/AudioPlayer'
 import EmptyState from '../../components/EmptyState'
 import StatusBadge from '../../components/StatusBadge'
+import SummaryReview from '../../components/SummaryReview'
 import { useProjectStore } from '../../stores/projectStore'
 import { useQuestionStore } from '../../stores/questionStore'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useTimelineStore } from '../../stores/timelineStore'
+import { useAuthStore } from '../../stores/authStore'
 import { formatDuration } from '../../utils/format'
+import type { Recording } from '../../api/types'
 
 export default function InterviewPage() {
   const [params, setParams] = useSearchParams()
@@ -111,16 +114,22 @@ function RecorderPanel({
   questionId: number
   onRecorded: (msg: string) => void
 }) {
-  const { create, uploadAudio, updateSummary, fetchByQuestion } = useRecordingStore()
+  const { create, uploadAudio, fetchByQuestion } = useRecordingStore()
   const { markers, fetchByRecording, create: createMarker } = useTimelineStore()
+  const user = useAuthStore((s) => s.user)
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [uploading, setUploading] = useState(0)
-  const [recordings, setRecordings] = useState<Awaited<ReturnType<typeof fetchByQuestion>>>([])
-  const [summaryDraft, setSummaryDraft] = useState('')
+  const [recordings, setRecordings] = useState<Recording[]>([])
+  const [notice, setNotice] = useState<{ text: string; error: boolean }>({ text: '', error: false })
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<number | null>(null)
+
+  const notify = (text: string, error = false) => {
+    setNotice({ text, error })
+    setTimeout(() => setNotice({ text: '', error: false }), 4000)
+  }
 
   const reload = useCallback(async () => {
     setRecordings(await fetchByQuestion(questionId))
@@ -193,6 +202,7 @@ function RecorderPanel({
   return (
     <section className="card">
       <div className="card-title">录音面板</div>
+      {notice.text && <div className={`toast ${notice.error ? 'error' : 'success'}`} style={{ position: 'static', marginBottom: 12 }}>{notice.text}</div>}
       <div className="recorder-box">
         {uploading > 0 ? (
           <div className="upload-progress">
@@ -231,24 +241,12 @@ function RecorderPanel({
                 <span className="muted">{formatDuration(r.duration_seconds)}</span>
               </div>
               <AudioPlayer recordingId={r.id} durationSeconds={r.duration_seconds} />
-              <div className="summary-edit">
-                <input
-                  value={summaryDraft || r.summary}
-                  placeholder="写一句话摘要"
-                  onChange={(e) => setSummaryDraft(e.target.value)}
-                />
-                <button
-                  className="btn btn-plain btn-small"
-                  disabled={!summaryDraft.trim()}
-                  onClick={async () => {
-                    await updateSummary(r.id, summaryDraft.trim())
-                    setSummaryDraft('')
-                    reload()
-                  }}
-                >
-                  保存摘要
-                </button>
-              </div>
+              <SummaryReview
+                recording={r}
+                viewerRole={(user?.role as 'interviewer' | 'archivist' | 'admin') || 'interviewer'}
+                onChanged={reload}
+                onNotice={notify}
+              />
               <div className="marker-actions">
                 <span className="muted">时间轴节点：</span>
                 {markers

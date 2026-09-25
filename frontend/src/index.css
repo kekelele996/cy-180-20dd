@@ -299,6 +299,9 @@ textarea:focus {
 .badge-ready { background: #d1fae5; color: #065f46; }
 .badge-failed { background: #e5e7eb; color: #6b7280; }
 .badge-default { background: #e5e7eb; color: #374151; }
+.badge-pending { background: #fef3c7; color: #92400e; }
+.badge-approved { background: #d1fae5; color: #065f46; }
+.badge-rejected { background: #fee2e2; color: #991b1b; }
 
 .empty-state {
   text-align: center;
@@ -730,4 +733,59 @@ code {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+/* 摘要审核流程 */
+.review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.review-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.review-box.pending {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.review-box.rejected {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.review-box.approved {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.review-box .review-label {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.review-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.reject-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reject-form input {
+  flex: 1;
 }

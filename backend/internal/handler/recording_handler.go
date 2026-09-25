@@ -88,7 +88,7 @@ func (h *RecordingHandler) List(c *gin.Context) {
 	util.OK(c, gin.H{"list": recordings})
 }
 
-// Update 更新录音摘要/时长/状态。
+// Update 更新录音时长/录音状态（摘要变更走提交审核/审核接口）。
 func (h *RecordingHandler) Update(c *gin.Context) {
 	actor, err := middleware.CurrentUser(c)
 	if err != nil {
@@ -113,8 +113,8 @@ func (h *RecordingHandler) Update(c *gin.Context) {
 	util.OKMessage(c, constants.MsgRecordingUpdated, recording)
 }
 
-// UpdateSummary 更新录音一句话摘要。
-func (h *RecordingHandler) UpdateSummary(c *gin.Context) {
+// SubmitSummary 采访员提交（或重新提交）摘要，进入待审。
+func (h *RecordingHandler) SubmitSummary(c *gin.Context) {
 	actor, err := middleware.CurrentUser(c)
 	if err != nil {
 		c.Error(err)
@@ -124,20 +124,49 @@ func (h *RecordingHandler) UpdateSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Summary string `json:"summary" binding:"required,max=512"`
-	}
+	var req dto.SubmitSummaryRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	recording, err := h.recordingSvc.UpdateSummary(actor, id, req.Summary)
+	recording, err := h.recordingSvc.SubmitSummary(actor, id, req.Summary)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary", "recording", recording.ID,
-		"更新录音摘要 "+req.Summary, c.ClientIP(), middleware.RequestID(c))
-	util.OKMessage(c, constants.MsgRecordingUpdated, recording)
+	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary.submit", "recording", recording.ID,
+		"提交摘要审核 "+req.Summary, c.ClientIP(), middleware.RequestID(c))
+	util.OKMessage(c, constants.MsgSummarySubmitted, recording)
+}
+
+// ReviewSummary 档案员审核摘要：批准或退回（退回需附原因）。
+func (h *RecordingHandler) ReviewSummary(c *gin.Context) {
+	actor, err := middleware.CurrentUser(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.ReviewSummaryRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	recording, err := h.recordingSvc.ReviewSummary(actor, id, req.Action, req.Reason)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	detail := "通过摘要审核"
+	msg := constants.MsgSummaryApproved
+	if req.Action == "reject" {
+		detail = "退回摘要，原因：" + req.Reason
+		msg = constants.MsgSummaryRejected
+	}
+	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary.review", "recording", recording.ID,
+		detail, c.ClientIP(), middleware.RequestID(c))
+	util.OKMessage(c, msg, recording)
 }
 
 // UploadAudio 上传录音文件到 MinIO 并关联到录音记录。

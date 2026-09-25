@@ -1,6 +1,6 @@
 # 口述历史采集工具（OralHistory）
 
-一个全栈的口述历史采集工具：登录后创建采访项目，填写受访者姓名、出生年份与背景简介；采访过程中支持录音并自动关联到对应问题；结束后在时间轴上标注关键节点，并为每段录音撰写一句话摘要；项目页按时间线展示全部采访片段，可点击播放录音并查看摘要。
+一个全栈的口述历史采集工具：登录后创建采访项目，填写受访者姓名、出生年份与背景简介；采访过程中支持录音并自动关联到对应问题；结束后在时间轴上标注关键节点，并为每段录音撰写一句话摘要提交档案员审核（待审 / 已通过 / 已退回，退回可补充后重提）；项目页按时间线展示全部采访片段与已通过摘要，可点击播放录音。
 
 ## 快速启动（Docker Compose，推荐）
 
@@ -34,8 +34,9 @@ docker compose down -v --remove-orphans
 - 用户注册/登录（JWT 认证 + RBAC 角色：管理员 / 采访员 / 档案员）
 - 采访项目管理：创建、编辑、状态流转（草稿 → 进行中 → 已完成 → 已归档）、删除
 - 采访问题管理：为项目添加问题清单，作为录音提纲
-- 录音管理：浏览器端录音 → 上传 MinIO → 自动关联到对应问题 → 一句话摘要
-- 时间轴：按项目/录音标注关键节点，项目页按时间线展示所有片段并支持播放
+- 录音管理：浏览器端录音 → 上传 MinIO → 自动关联到对应问题
+- 摘要审核：采访员撰写一句话摘要并提交 → 档案员批准或填写原因退回 → 退回后补充重提；每段录音有未提交/待审/已通过/已退回四个阶段，待审期间时间线仍显示上一版，通过后才切换
+- 时间轴：按项目/录音标注关键节点，项目页按时间线展示所有片段并支持播放，摘要只展示已通过版本
 - 操作审计日志（仅管理员）、全局错误处理与请求追踪（request_id）
 
 ## 技术栈
@@ -76,7 +77,7 @@ cy-180/
 │   ├── src/
 │   │   ├── api/                    # 每个实体一个 API 文件（auth/project/question/recording/timelineMarker/audit/user）
 │   │   ├── components/             # StatusBadge/EmptyState/ConfirmDialog/DataTable/AudioPlayer/ProjectForm/Layout
-│   │   ├── pages/                  # login/projects/interview/audit 页面目录
+│   │   ├── pages/                  # login/projects/interview/review/audit 页面目录
 │   │   ├── stores/                 # 按实体拆分（auth/project/question/recording/timeline）
 │   │   ├── hooks/                  # useAuth/usePagination
 │   │   ├── utils/                  # request.ts（拦截器）/format.ts
@@ -154,8 +155,9 @@ npm run dev                # 默认 http://localhost:5173，/api 代理到 http:
 | GET | /api/v1/recordings?project_id= 或 ?question_id= | 录音列表（复用 RecordingService.List） | 登录 |
 | POST | /api/v1/recordings | 创建录音记录 | 登录 |
 | GET | /api/v1/recordings/:id | 录音详情 | 登录 |
-| PUT | /api/v1/recordings/:id | 更新录音 | 登录 |
-| PUT | /api/v1/recordings/:id/summary | 更新一句话摘要 | 登录 |
+| PUT | /api/v1/recordings/:id | 更新录音（时长/录音状态） | 登录 |
+| POST | /api/v1/recordings/:id/summary/submit | 采访员提交/重新提交摘要审核（draft/rejected/approved → pending） | 采访员、管理员 |
+| POST | /api/v1/recordings/:id/summary/review | 档案员审核摘要（approve 通过 / reject 退回并附原因） | 档案员、管理员 |
 | POST | /api/v1/recordings/:id/audio | 上传录音（multipart） | 登录 |
 | GET | /api/v1/recordings/:id/audio | 播放音频流 | 登录 |
 | DELETE | /api/v1/recordings/:id | 删除录音 | 登录 |
@@ -165,7 +167,7 @@ npm run dev                # 默认 http://localhost:5173，/api 代理到 http:
 | DELETE | /api/v1/timeline-markers/:id | 删除节点 | 登录 |
 | GET | /api/v1/audit-logs | 审计日志 | 管理员 |
 
-复用关系说明：`GET /api/v1/recordings?project_id=` 与 `GET /api/v1/recordings?question_id=` 复用 `RecordingService.List`；`GET /api/v1/timeline-markers?project_id=` 与 `GET /api/v1/timeline-markers?recording_id=` 复用 `TimelineMarkerService.List`；前端 `ProjectForm` 组件在项目列表页与项目详情页复用，`StatusBadge` / `AudioPlayer` 在多个页面复用。
+复用关系说明：`GET /api/v1/recordings?project_id=` 与 `GET /api/v1/recordings?question_id=` 复用 `RecordingService.List`；`GET /api/v1/timeline-markers?project_id=` 与 `GET /api/v1/timeline-markers?recording_id=` 复用 `TimelineMarkerService.List`；前端 `ProjectForm` 组件在项目列表页与项目详情页复用，`StatusBadge` / `AudioPlayer` 在多个页面复用，`SummaryReview` 组件在采访工作台（采访员提交）与摘要审核台（档案员审核）按角色复用。
 
 ## curl 调用示例
 
@@ -199,10 +201,20 @@ curl -sS -X POST http://localhost:9180/api/v1/recordings/1/audio \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@interview.webm" -F "duration_seconds=30"
 
-# 撰写一句话摘要
-curl -sS -X PUT http://localhost:9180/api/v1/recordings/1/summary \
+# 采访员撰写一句话摘要并提交审核（进入 pending）
+curl -sS -X POST http://localhost:9180/api/v1/recordings/1/summary/submit \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"summary":"王奶奶回忆童年在胡同里捉迷藏的趣事"}'
+
+# 档案员通过摘要（pending_summary 切换为正式 summary，进入项目时间线）
+curl -sS -X POST http://localhost:9180/api/v1/recordings/1/summary/review \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action":"approve"}'
+
+# 档案员退回摘要并填写原因（采访员可在待审版本基础上补充后重新提交）
+curl -sS -X POST http://localhost:9180/api/v1/recordings/1/summary/review \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action":"reject","reason":"缺少具体时间地点，请补充"}'
 
 # 标注时间轴节点
 curl -sS -X POST http://localhost:9180/api/v1/timeline-markers \
@@ -282,6 +294,35 @@ curl -sS "http://localhost:9180/api/v1/audit-logs?page=1&page_size=10" -H "Autho
 - `frontend/src/pages/projects/ProjectDetailPage.tsx`（时间线状态展示）
 - `frontend/src/pages/interview/InterviewPage.tsx`（录音面板状态展示）
 - `frontend/src/api/types.ts`（RecordingStatus 类型）
+
+### 4. 摘要审核状态 ReviewStatus（draft 未提交 / pending 待审 / approved 已通过 / rejected 已退回）
+
+每段录音的摘要都要经历「采访员提交 → 档案员批准/退回 →（退回后）采访员补充重新提交」的审核流程。录音表采用双版本字段：`summary` 保存已通过版本（项目时间线始终展示它），`pending_summary` 保存待审版本；待审期间时间线继续显示上一版，档案员批准后才切换。
+
+状态机：
+- 采访员提交：`draft / approved / rejected → pending`（待审期间不可重复提交）
+- 档案员处理：`pending → approved`（待审版本写入 summary）或 `pending → rejected`（填写 reject_reason，保留 pending_summary 供补充）
+
+后端出现位置：
+- `backend/internal/constants/review_status.go`（定义、CanSubmitReview/CanReview 状态机）
+- `backend/internal/model/recording.go`（review_status / pending_summary / reject_reason / reviewed_by / reviewed_at 字段）
+- `backend/internal/dto/recording.go`（SubmitSummaryRequest、ReviewSummaryRequest 的 oneof/required 校验）
+- `backend/internal/service/recording_service.go`（SubmitSummary/ReviewSummary 状态机与角色校验，FOR UPDATE 加锁）
+- `backend/internal/handler/recording_handler.go`（SubmitSummary/ReviewSummary 接口与审计埋点）
+- `backend/internal/router/recording.go`（RBAC：提交限采访员、审核限档案员）
+- `backend/internal/database/migrate.go`（历史已写摘要回填为 approved）
+- `backend/internal/constants/log_templates.go`（LogSummarySubmit/LogSummaryReview）
+- `backend/internal/constants/error_codes.go`（CodeReviewStatus 40905）
+- `backend/internal/constants/messages.go`（MsgSummarySubmitted/Approved/Rejected）
+
+前端出现位置：
+- `frontend/src/constants/index.ts`（REVIEW_STATUS_* / REVIEW_STATUS_TEXT / ReviewStatus 类型）
+- `frontend/src/components/StatusBadge.tsx`（type="review" 审核阶段徽标）
+- `frontend/src/components/SummaryReview.tsx`（采访工作台与审核台共用的提交/批准/退回组件）
+- `frontend/src/pages/interview/InterviewPage.tsx`（采访员提交与重提、查看退回原因）
+- `frontend/src/pages/review/ReviewPage.tsx`（档案员审核台，按阶段筛选、批准/退回）
+- `frontend/src/pages/projects/ProjectDetailPage.tsx`（时间线仅展示已通过版本，待审/退回给出提示）
+- `frontend/src/api/types.ts`（ReviewStatus 与 Recording 新字段）
 
 ## Docker 部署说明
 

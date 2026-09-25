@@ -9,6 +9,8 @@ import {
   PROJECT_STATUS_ARCHIVED,
   PROJECT_STATUS_COMPLETED,
   PROJECT_STATUS_IN_PROGRESS,
+  REVIEW_STATUS_PENDING,
+  REVIEW_STATUS_REJECTED,
 } from '../../constants'
 import { useProjectStore } from '../../stores/projectStore'
 import { useQuestionStore } from '../../stores/questionStore'
@@ -193,13 +195,27 @@ function TimelineItem({
         <div className="timeline-head">
           <span className="timeline-q">{question ? `问题：${question.content}` : `问题 #${recording.question_id}`}</span>
           <StatusBadge status={recording.status} type="recording" />
+          <StatusBadge status={recording.review_status} type="review" />
           <span className="timeline-duration">{formatDuration(recording.duration_seconds)}</span>
         </div>
         <AudioPlayer recordingId={recording.id} durationSeconds={recording.duration_seconds} />
         <div className="timeline-summary">
           <span className="summary-label">一句话摘要：</span>
-          {recording.summary || <span className="muted">暂无摘要</span>}
+          {recording.summary || <span className="muted">暂无已通过摘要</span>}
         </div>
+        {/* 待审期间时间线继续显示上一版（recording.summary），仅提示存在待审版本，不展示其内容 */}
+        {recording.review_status === REVIEW_STATUS_PENDING && (
+          <div className="review-box pending" style={{ marginTop: 6 }}>
+            <span className="review-label">新版本待审：</span>
+            档案员通过后才会替换上方摘要
+          </div>
+        )}
+        {recording.review_status === REVIEW_STATUS_REJECTED && recording.reject_reason && (
+          <div className="review-box rejected" style={{ marginTop: 6 }}>
+            <span className="review-label">最近退回原因：</span>
+            {recording.reject_reason}
+          </div>
+        )}
         {markers.length > 0 && (
           <div className="marker-list">
             {markers.map((m) => (

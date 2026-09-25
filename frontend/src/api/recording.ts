@@ -9,7 +9,6 @@ export function createRecording(payload: {
   project_id: number
   question_id: number
   duration_seconds?: number
-  summary?: string
 }) {
   return post<Recording>('/recordings', payload)
 }
@@ -18,12 +17,18 @@ export function getRecording(id: number) {
   return get<Recording>(`/recordings/${id}`)
 }
 
-export function updateRecording(id: number, payload: { duration_seconds?: number; summary?: string; status?: string }) {
+export function updateRecording(id: number, payload: { duration_seconds?: number; status?: string }) {
   return put<Recording>(`/recordings/${id}`, payload)
 }
 
-export function updateRecordingSummary(id: number, summary: string) {
-  return put<Recording>(`/recordings/${id}/summary`, { summary })
+// 采访员提交/重新提交摘要审核，提交后进入待审。
+export function submitRecordingSummary(id: number, summary: string) {
+  return post<Recording>(`/recordings/${id}/summary/submit`, { summary })
+}
+
+// 档案员审核摘要：通过或退回（退回需填写原因）。
+export function reviewRecordingSummary(id: number, payload: { action: 'approve' | 'reject'; reason?: string }) {
+  return post<Recording>(`/recordings/${id}/summary/review`, payload)
 }
 
 export function uploadRecordingAudio(id: number, file: Blob, durationSeconds: number, onProgress?: (p: number) => void) {

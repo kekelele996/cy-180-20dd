@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/oralhistory/oralhistory/internal/config"
+	"github.com/oralhistory/oralhistory/internal/constants"
 	"github.com/oralhistory/oralhistory/internal/handler"
 	"github.com/oralhistory/oralhistory/internal/middleware"
 )
@@ -17,7 +18,17 @@ func RegisterRecordingRoutes(g *gin.RouterGroup, h *handler.RecordingHandler, cf
 		group.POST("", h.Create)
 		group.GET("/:id", h.Get)
 		group.PUT("/:id", h.Update)
-		group.PUT("/:id/summary", h.UpdateSummary)
+		// 摘要审核流程：采访员提交 → 档案员批准/退回。
+		group.POST(
+			"/:id/summary/submit",
+			middleware.RBAC(logger, constants.RoleInterviewer, constants.RoleAdmin),
+			h.SubmitSummary,
+		)
+		group.POST(
+			"/:id/summary/review",
+			middleware.RBAC(logger, constants.RoleArchivist, constants.RoleAdmin),
+			h.ReviewSummary,
+		)
 		group.POST("/:id/audio", h.UploadAudio)
 		group.GET("/:id/audio", h.PlayAudio)
 		group.DELETE("/:id", h.Delete)

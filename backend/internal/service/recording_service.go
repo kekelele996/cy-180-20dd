@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/oralhistory/oralhistory/internal/constants"
 	"github.com/oralhistory/oralhistory/internal/dto"
@@ -19,7 +21,10 @@ type RecordingService interface {
 	// List 同时服务「按项目」与「按问题」两个接口，复用同一 service 方法。
 	List(projectID, questionID uint) ([]model.Recording, error)
 	Update(actor *model.User, id uint, req *dto.UpdateRecordingRequest) (*model.Recording, error)
-	UpdateSummary(actor *model.User, id uint, summary string) (*model.Recording, error)
+	// SubmitSummary 采访员提交/重新提交摘要，进入待审；待审期间不改变时间线展示的已通过版本。
+	SubmitSummary(actor *model.User, id uint, summary string) (*model.Recording, error)
+	// ReviewSummary 档案员批准（切换时间线版本）或填写原因退回。
+	ReviewSummary(actor *model.User, id uint, action, reason string) (*model.Recording, error)
 	AttachAudio(actor *model.User, id uint, audioKey string, duration int) (*model.Recording, error)
 	Delete(actor *model.User, id uint) error
 	CountByProject(projectID uint) (int64, error)
@@ -54,8 +59,8 @@ func (s *recordingService) Create(actor *model.User, req *dto.CreateRecordingReq
 		ProjectID:       req.ProjectID,
 		QuestionID:      req.QuestionID,
 		DurationSeconds: req.DurationSeconds,
-		Summary:         req.Summary,
 		Status:          constants.RecordingStatusRecording,
+		ReviewStatus:    constants.ReviewStatusDraft,
 		CreatedBy:       actor.ID,
 	}
 	if err := s.recordingRepo.Create(recording); err != nil {
@@ -103,9 +108,6 @@ func (s *recordingService) Update(actor *model.User, id uint, req *dto.UpdateRec
 	if req.DurationSeconds > 0 {
 		recording.DurationSeconds = req.DurationSeconds
 	}
-	if req.Summary != "" {
-		recording.Summary = req.Summary
-	}
 	if req.Status != "" {
 		if !constants.ValidRecordingStatus(req.Status) {
 			return nil, util.NewAppError(constants.CodeValidation, fmt.Sprintf("录音状态 %s 不合法", req.Status), nil)
@@ -123,19 +125,76 @@ func (s *recordingService) Update(actor *model.User, id uint, req *dto.UpdateRec
 	return recording, nil
 }
 
-func (s *recordingService) UpdateSummary(actor *model.User, id uint, summary string) (*model.Recording, error) {
-	recording, err := s.recordingRepo.FindByID(id)
+func (s *recordingService) SubmitSummary(actor *model.User, id uint, summary string) (*model.Recording, error) {
+	if actor.Role != constants.RoleInterviewer && actor.Role != constants.RoleAdmin {
+		return nil, util.NewAppError(constants.CodeForbidden, "仅采访员可以提交摘要审核", nil)
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return nil, util.NewAppError(constants.CodeValidation, "摘要内容不能为空", nil)
+	}
+	recording, err := s.recordingRepo.FindByIDForUpdate(id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, util.NewAppError(constants.CodeNotFound, fmt.Sprintf("录音 %d 不存在", id), err)
 		}
 		return nil, util.NewAppError(constants.CodeInternal, fmt.Sprintf("查询录音 %d 失败", id), err)
 	}
-	recording.Summary = summary
-	if err := s.recordingRepo.Update(recording); err != nil {
-		return nil, util.NewAppError(constants.CodeInternal, fmt.Sprintf("更新录音 %d 摘要失败", id), err)
+	if !constants.CanSubmitReview(recording.ReviewStatus) {
+		return nil, util.NewAppError(constants.CodeReviewStatus,
+			fmt.Sprintf("录音 %d 摘要当前为待审状态，档案员处理后才能重新提交", id), nil)
 	}
-	s.logger.Info(fmt.Sprintf(constants.LogRecordingSummary, actor.Username, recording.ID, summary))
+	// 新内容先作为待审版本保存，已通过版本 Summary 保持不变（时间线继续显示上一版）。
+	recording.PendingSummary = summary
+	recording.ReviewStatus = constants.ReviewStatusPending
+	recording.RejectReason = ""
+	recording.ReviewedBy = 0
+	recording.ReviewedAt = nil
+	if err := s.recordingRepo.Update(recording); err != nil {
+		return nil, util.NewAppError(constants.CodeInternal, fmt.Sprintf("提交录音 %d 摘要审核失败", id), err)
+	}
+	s.logger.Info(fmt.Sprintf(constants.LogSummarySubmit, actor.Username, recording.ID, recording.ReviewStatus))
+	return recording, nil
+}
+
+func (s *recordingService) ReviewSummary(actor *model.User, id uint, action, reason string) (*model.Recording, error) {
+	if actor.Role != constants.RoleArchivist && actor.Role != constants.RoleAdmin {
+		return nil, util.NewAppError(constants.CodeForbidden, "仅档案员可以审核摘要", nil)
+	}
+	reason = strings.TrimSpace(reason)
+	if action == "reject" && reason == "" {
+		return nil, util.NewAppError(constants.CodeValidation, "退回摘要时必须填写退回原因", nil)
+	}
+	recording, err := s.recordingRepo.FindByIDForUpdate(id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, util.NewAppError(constants.CodeNotFound, fmt.Sprintf("录音 %d 不存在", id), err)
+		}
+		return nil, util.NewAppError(constants.CodeInternal, fmt.Sprintf("查询录音 %d 失败", id), err)
+	}
+	if !constants.CanReview(recording.ReviewStatus) {
+		return nil, util.NewAppError(constants.CodeReviewStatus,
+			fmt.Sprintf("录音 %d 摘要当前不是待审状态，无法审核", id), nil)
+	}
+	now := time.Now()
+	recording.ReviewedBy = actor.ID
+	recording.ReviewedAt = &now
+	switch action {
+	case "approve":
+		// 批准后待审版本切换为正式版本，出现在项目时间线。
+		recording.Summary = recording.PendingSummary
+		recording.PendingSummary = ""
+		recording.ReviewStatus = constants.ReviewStatusApproved
+		recording.RejectReason = ""
+	case "reject":
+		// 退回后保留待审版本供采访员补充，已通过版本（上一版）继续在时间线展示。
+		recording.ReviewStatus = constants.ReviewStatusRejected
+		recording.RejectReason = reason
+	}
+	if err := s.recordingRepo.Update(recording); err != nil {
+		return nil, util.NewAppError(constants.CodeInternal, fmt.Sprintf("审核录音 %d 摘要失败", id), err)
+	}
+	s.logger.Info(fmt.Sprintf(constants.LogSummaryReview, actor.Username, recording.ID, action, recording.ReviewStatus))
 	return recording, nil
 }
 

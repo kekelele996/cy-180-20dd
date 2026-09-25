@@ -92,6 +92,10 @@ paths:
   /recordings/{id}/audio:
     post: { summary: 上传录音文件(multipart), tags: [recordings], security: [{ BearerAuth: [] }] }
     get: { summary: 播放录音音频流, tags: [recordings], security: [{ BearerAuth: [] }] }
+  /recordings/{id}/summary/submit:
+    post: { summary: 采访员提交/重新提交摘要审核（采访员、管理员）, tags: [recordings], security: [{ BearerAuth: [] }] }
+  /recordings/{id}/summary/review:
+    post: { summary: 档案员审核摘要：approve 通过 / reject 退回并填写原因（档案员、管理员）, tags: [recordings], security: [{ BearerAuth: [] }] }
   /timeline-markers:
     get:
       summary: 时间轴节点列表（project_id 或 recording_id）
