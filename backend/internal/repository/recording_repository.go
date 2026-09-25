@@ -13,6 +13,9 @@ import (
 type RecordingRepository interface {
 	Create(recording *model.Recording) error
 	FindByID(id uint) (*model.Recording, error)
+	// List 按项目/问题（任一为 0 则不过滤该维度）并可按摘要审核状态筛选；
+	// 全部过滤条件为 0 值时返回全量录音（供档案员审核工作台使用）。
+	List(projectID, questionID uint, reviewStatus string) ([]model.Recording, error)
 	ListByProject(projectID uint) ([]model.Recording, error)
 	ListByQuestion(questionID uint) ([]model.Recording, error)
 	FindByIDForUpdate(id uint) (*model.Recording, error)
@@ -49,20 +52,30 @@ func (r *recordingRepository) FindByID(id uint) (*model.Recording, error) {
 	return &recording, nil
 }
 
-func (r *recordingRepository) ListByProject(projectID uint) ([]model.Recording, error) {
+func (r *recordingRepository) List(projectID, questionID uint, reviewStatus string) ([]model.Recording, error) {
 	var recordings []model.Recording
-	if err := r.db.Where("project_id = ?", projectID).Order("id ASC").Find(&recordings).Error; err != nil {
-		return nil, fmt.Errorf("list recordings of project %d: %w", projectID, err)
+	query := r.db.Model(&model.Recording{})
+	if projectID > 0 {
+		query = query.Where("project_id = ?", projectID)
+	}
+	if questionID > 0 {
+		query = query.Where("question_id = ?", questionID)
+	}
+	if reviewStatus != "" {
+		query = query.Where("review_status = ?", reviewStatus)
+	}
+	if err := query.Order("id ASC").Find(&recordings).Error; err != nil {
+		return nil, fmt.Errorf("list recordings project=%d question=%d review=%s: %w", projectID, questionID, reviewStatus, err)
 	}
 	return recordings, nil
 }
 
+func (r *recordingRepository) ListByProject(projectID uint) ([]model.Recording, error) {
+	return r.List(projectID, 0, "")
+}
+
 func (r *recordingRepository) ListByQuestion(questionID uint) ([]model.Recording, error) {
-	var recordings []model.Recording
-	if err := r.db.Where("question_id = ?", questionID).Order("id ASC").Find(&recordings).Error; err != nil {
-		return nil, fmt.Errorf("list recordings of question %d: %w", questionID, err)
-	}
-	return recordings, nil
+	return r.List(0, questionID, "")
 }
 
 func (r *recordingRepository) FindByIDForUpdate(id uint) (*model.Recording, error) {

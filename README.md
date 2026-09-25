@@ -35,6 +35,7 @@ docker compose down -v --remove-orphans
 - 采访项目管理：创建、编辑、状态流转（草稿 → 进行中 → 已完成 → 已归档）、删除
 - 采访问题管理：为项目添加问题清单，作为录音提纲
 - 录音管理：浏览器端录音 → 上传 MinIO → 自动关联到对应问题 → 一句话摘要
+- 摘要审核：每段录音的摘要经历 待审 / 已通过 / 已退回 三阶段——采访员写好摘要后提交审核，档案员批准或填写原因退回，退回后采访员补充并重新提交；待审期间项目时间线仍显示上一版，通过后才切换
 - 时间轴：按项目/录音标注关键节点，项目页按时间线展示所有片段并支持播放
 - 操作审计日志（仅管理员）、全局错误处理与请求追踪（request_id）
 
@@ -151,11 +152,13 @@ npm run dev                # 默认 http://localhost:5173，/api 代理到 http:
 | POST | /api/v1/projects/:id/questions | 添加问题 | 登录 |
 | PUT | /api/v1/questions/:id | 更新问题 | 登录 |
 | DELETE | /api/v1/questions/:id | 删除问题 | 登录 |
-| GET | /api/v1/recordings?project_id= 或 ?question_id= | 录音列表（复用 RecordingService.List） | 登录 |
+| GET | /api/v1/recordings?project_id= 或 ?question_id= 或 ?review_status= | 录音列表（复用 RecordingService.List；review_status 可跨项目筛选，档案员审核台使用） | 登录 |
 | POST | /api/v1/recordings | 创建录音记录 | 登录 |
 | GET | /api/v1/recordings/:id | 录音详情 | 登录 |
-| PUT | /api/v1/recordings/:id | 更新录音 | 登录 |
-| PUT | /api/v1/recordings/:id/summary | 更新一句话摘要 | 登录 |
+| PUT | /api/v1/recordings/:id | 更新录音（时长/录制状态） | 登录 |
+| PUT | /api/v1/recordings/:id/summary/submit | 提交/重新提交摘要进入待审 | 采访员 / 管理员 |
+| PUT | /api/v1/recordings/:id/summary/approve | 批准待审摘要（时间线切换到新版本） | 档案员 / 管理员 |
+| PUT | /api/v1/recordings/:id/summary/reject | 退回待审摘要（body 含 reason，时间线保留上一版） | 档案员 / 管理员 |
 | POST | /api/v1/recordings/:id/audio | 上传录音（multipart） | 登录 |
 | GET | /api/v1/recordings/:id/audio | 播放音频流 | 登录 |
 | DELETE | /api/v1/recordings/:id | 删除录音 | 登录 |
@@ -199,10 +202,22 @@ curl -sS -X POST http://localhost:9180/api/v1/recordings/1/audio \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@interview.webm" -F "duration_seconds=30"
 
-# 撰写一句话摘要
-curl -sS -X PUT http://localhost:9180/api/v1/recordings/1/summary \
+# 撰写一句话摘要并提交审核（待审期间时间线仍显示上一版）
+curl -sS -X PUT http://localhost:9180/api/v1/recordings/1/summary/submit \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"summary":"王奶奶回忆童年在胡同里捉迷藏的趣事"}'
+
+# 档案员批准（新版本切换到项目时间线）
+curl -sS -X PUT http://localhost:9180/api/v1/recordings/1/summary/approve \
+  -H "Authorization: Bearer $TOKEN"
+
+# 或填写原因退回，采访员补充后重新提交
+curl -sS -X PUT http://localhost:9180/api/v1/recordings/1/summary/reject \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"reason":"摘要缺少事件发生的时间地点，请补充"}'
+
+# 档案员审核台：跨项目查询待审录音
+curl -sS "http://localhost:9180/api/v1/recordings?review_status=pending" -H "Authorization: Bearer $TOKEN"
 
 # 标注时间轴节点
 curl -sS -X POST http://localhost:9180/api/v1/timeline-markers \
@@ -282,6 +297,30 @@ curl -sS "http://localhost:9180/api/v1/audit-logs?page=1&page_size=10" -H "Autho
 - `frontend/src/pages/projects/ProjectDetailPage.tsx`（时间线状态展示）
 - `frontend/src/pages/interview/InterviewPage.tsx`（录音面板状态展示）
 - `frontend/src/api/types.ts`（RecordingStatus 类型）
+
+### 4. 摘要审核状态 ReviewStatus（unsubmitted / pending / approved / rejected）
+
+与录制状态相互独立：`summary` 列只存已通过版本（时间线展示），`pending_summary` 存待审版本，`reject_reason` 存最近一次退回原因。流转：unsubmitted/rejected/approved →（采访员提交）→ pending →（档案员批准）→ approved（待审版本覆盖 summary）；pending →（档案员退回）→ rejected（summary 不变，时间线保留上一版）。
+
+后端出现位置：
+- `backend/internal/constants/review_status.go`（定义、校验、CanSubmitReview/CanReviewReview）
+- `backend/internal/model/recording.go`（review_status / pending_summary / reject_reason 字段）
+- `backend/internal/dto/recording.go`（SubmitSummaryRequest / RejectSummaryRequest）
+- `backend/internal/service/recording_service.go`（SubmitSummary/ApproveSummary/RejectSummary 与角色校验）
+- `backend/internal/handler/recording_handler.go`、`backend/internal/router/recording.go`（三个接口 + RBAC）
+- `backend/internal/repository/recording_repository.go`（List 支持 review_status 筛选）
+- `backend/internal/util/formatters.go`（ReviewStatusText）
+- `backend/internal/constants/log_templates.go`（LogSummarySubmit/Approve/Reject）
+- `backend/internal/constants/error_codes.go`（CodeReviewStatus）
+
+前端出现位置：
+- `frontend/src/constants/index.ts`（REVIEW_STATUS_* / REVIEW_STATUS_TEXT / REVIEW_STATUS_OPTIONS）
+- `frontend/src/components/ReviewBadge.tsx`（审核阶段徽标）
+- `frontend/src/components/SummaryReviewPanel.tsx`（采访员提交/补充/重新提交面板）
+- `frontend/src/pages/review/ReviewPage.tsx`（档案员审核工作台）
+- `frontend/src/pages/interview/InterviewPage.tsx`（录音列表展示阶段、待审摘要、退回原因）
+- `frontend/src/pages/projects/ProjectDetailPage.tsx`（时间线只显示已通过版本）
+- `frontend/src/api/types.ts`（ReviewStatus 类型）
 
 ## Docker 部署说明
 

@@ -81,14 +81,49 @@ paths:
     delete: { summary: 删除问题, tags: [questions], security: [{ BearerAuth: [] }] }
   /recordings:
     get:
-      summary: 录音列表（project_id 或 question_id）
+      summary: 录音列表（project_id / question_id / review_status，至少一个）
       tags: [recordings]
       security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: project_id, in: query, schema: { type: integer } }
+        - { name: question_id, in: query, schema: { type: integer } }
+        - { name: review_status, in: query, schema: { type: string, enum: [unsubmitted, pending, approved, rejected] }, description: 摘要审核状态，可跨项目筛选（档案员工作台） }
     post: { summary: 创建录音记录, tags: [recordings], security: [{ BearerAuth: [] }] }
   /recordings/{id}:
     get: { summary: 录音详情, tags: [recordings], security: [{ BearerAuth: [] }] }
-    put: { summary: 更新录音, tags: [recordings], security: [{ BearerAuth: [] }] }
+    put: { summary: 更新录音（时长/录制状态）, tags: [recordings], security: [{ BearerAuth: [] }] }
     delete: { summary: 删除录音, tags: [recordings], security: [{ BearerAuth: [] }] }
+  /recordings/{id}/summary/submit:
+    put:
+      summary: 提交/重新提交一句话摘要进入待审（采访员、管理员）
+      tags: [recordings]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: { type: string, maxLength: 512 }
+  /recordings/{id}/summary/approve:
+    put:
+      summary: 批准待审摘要，待审版本覆盖正式版本并进入时间线（档案员、管理员）
+      tags: [recordings]
+      security: [{ BearerAuth: [] }]
+  /recordings/{id}/summary/reject:
+    put:
+      summary: 退回待审摘要并填写原因，时间线仍显示上一版（档案员、管理员）
+      tags: [recordings]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, maxLength: 512 }
   /recordings/{id}/audio:
     post: { summary: 上传录音文件(multipart), tags: [recordings], security: [{ BearerAuth: [] }] }
     get: { summary: 播放录音音频流, tags: [recordings], security: [{ BearerAuth: [] }] }

@@ -1,9 +1,10 @@
-// 采访工作台：选择项目 → 按问题录音 → 自动关联 → 一句话摘要 → 时间轴标注。
+// 采访工作台：选择项目 → 按问题录音 → 自动关联 → 一句话摘要（提交审核） → 时间轴标注。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import AudioPlayer from '../../components/AudioPlayer'
 import EmptyState from '../../components/EmptyState'
 import StatusBadge from '../../components/StatusBadge'
+import SummaryReviewPanel from '../../components/SummaryReviewPanel'
 import { useProjectStore } from '../../stores/projectStore'
 import { useQuestionStore } from '../../stores/questionStore'
 import { useRecordingStore } from '../../stores/recordingStore'
@@ -18,6 +19,13 @@ export default function InterviewPage() {
   const { fetchByProject: fetchRecordings } = useRecordingStore()
   const [activeQuestion, setActiveQuestion] = useState(0)
   const [message, setMessage] = useState('')
+  const [messageError, setMessageError] = useState(false)
+
+  const notify = useCallback((msg: string, isError = false) => {
+    setMessage(msg)
+    setMessageError(isError)
+    setTimeout(() => setMessage(''), 4000)
+  }, [])
 
   useEffect(() => {
     fetchList({ page: 1, page_size: 100 })
@@ -48,7 +56,7 @@ export default function InterviewPage() {
       <div className="page-header">
         <h2>采访工作台</h2>
       </div>
-      {message && <div className="toast success">{message}</div>}
+      {message && <div className={`toast ${messageError ? 'error' : 'success'}`}>{message}</div>}
 
       <section className="card">
         <div className="card-title">选择采访项目</div>
@@ -89,10 +97,9 @@ export default function InterviewPage() {
             <RecorderPanel
               projectId={selectedProject}
               questionId={activeQuestion}
-              onRecorded={(summary) => {
+              onRecorded={(summary, isError) => {
                 fetchRecordings(selectedProject)
-                setMessage(summary)
-                setTimeout(() => setMessage(''), 4000)
+                notify(summary, isError)
               }}
             />
           )}
@@ -109,15 +116,14 @@ function RecorderPanel({
 }: {
   projectId: number
   questionId: number
-  onRecorded: (msg: string) => void
+  onRecorded: (msg: string, isError?: boolean) => void
 }) {
-  const { create, uploadAudio, updateSummary, fetchByQuestion } = useRecordingStore()
+  const { create, uploadAudio, fetchByQuestion } = useRecordingStore()
   const { markers, fetchByRecording, create: createMarker } = useTimelineStore()
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [uploading, setUploading] = useState(0)
   const [recordings, setRecordings] = useState<Awaited<ReturnType<typeof fetchByQuestion>>>([])
-  const [summaryDraft, setSummaryDraft] = useState('')
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<number | null>(null)
@@ -161,7 +167,7 @@ function RecorderPanel({
           await reload()
           onRecorded('录音上传成功，已自动关联到当前问题')
         } catch (e) {
-          onRecorded(e instanceof Error ? e.message : '录音上传失败')
+          onRecorded(e instanceof Error ? e.message : '录音上传失败', true)
         } finally {
           setUploading(0)
           setSeconds(0)
@@ -231,24 +237,7 @@ function RecorderPanel({
                 <span className="muted">{formatDuration(r.duration_seconds)}</span>
               </div>
               <AudioPlayer recordingId={r.id} durationSeconds={r.duration_seconds} />
-              <div className="summary-edit">
-                <input
-                  value={summaryDraft || r.summary}
-                  placeholder="写一句话摘要"
-                  onChange={(e) => setSummaryDraft(e.target.value)}
-                />
-                <button
-                  className="btn btn-plain btn-small"
-                  disabled={!summaryDraft.trim()}
-                  onClick={async () => {
-                    await updateSummary(r.id, summaryDraft.trim())
-                    setSummaryDraft('')
-                    reload()
-                  }}
-                >
-                  保存摘要
-                </button>
-              </div>
+              <SummaryReviewPanel recording={r} onMessage={onRecorded} onChanged={reload} />
               <div className="marker-actions">
                 <span className="muted">时间轴节点：</span>
                 {markers

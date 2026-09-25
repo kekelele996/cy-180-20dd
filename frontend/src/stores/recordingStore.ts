@@ -1,10 +1,12 @@
 // 录音片段状态管理。
 import { create } from 'zustand'
 import {
+  approveRecordingSummary,
   createRecording,
   deleteRecording,
   listRecordings,
-  updateRecordingSummary,
+  rejectRecordingSummary,
+  submitRecordingSummary,
   uploadRecordingAudio,
 } from '../api/recording'
 import type { Recording } from '../api/types'
@@ -16,7 +18,9 @@ interface RecordingState {
   fetchByQuestion: (questionId: number) => Promise<Recording[]>
   create: (payload: { project_id: number; question_id: number; duration_seconds?: number }) => Promise<Recording>
   uploadAudio: (id: number, blob: Blob, duration: number, onProgress?: (p: number) => void) => Promise<void>
-  updateSummary: (id: number, summary: string) => Promise<void>
+  submitSummary: (id: number, summary: string) => Promise<Recording>
+  approveSummary: (id: number) => Promise<Recording>
+  rejectSummary: (id: number, reason: string) => Promise<Recording>
   remove: (id: number) => Promise<void>
 }
 
@@ -51,9 +55,22 @@ export const useRecordingStore = create<RecordingState>((set) => ({
     set((s) => ({ recordings: s.recordings.map((r) => (r.id === id ? updated : r)) }))
   },
 
-  async updateSummary(id, summary) {
-    const updated = await updateRecordingSummary(id, summary)
+  async submitSummary(id, summary) {
+    const updated = await submitRecordingSummary(id, summary)
     set((s) => ({ recordings: s.recordings.map((r) => (r.id === id ? updated : r)) }))
+    return updated
+  },
+
+  async approveSummary(id) {
+    const updated = await approveRecordingSummary(id)
+    set((s) => ({ recordings: s.recordings.map((r) => (r.id === id ? updated : r)) }))
+    return updated
+  },
+
+  async rejectSummary(id, reason) {
+    const updated = await rejectRecordingSummary(id, reason)
+    set((s) => ({ recordings: s.recordings.map((r) => (r.id === id ? updated : r)) }))
+    return updated
   },
 
   async remove(id) {

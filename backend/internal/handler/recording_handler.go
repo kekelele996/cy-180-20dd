@@ -63,7 +63,8 @@ func (h *RecordingHandler) Get(c *gin.Context) {
 	util.OK(c, recording)
 }
 
-// List 录音列表（project_id 或 question_id 二选一，复用同一 service 方法）。
+// List 录音列表：project_id / question_id 二选一；档案员工作台可用 review_status
+// 跨项目筛选，或同时带 project_id 缩小范围（复用同一 service 方法）。
 func (h *RecordingHandler) List(c *gin.Context) {
 	var projectID, questionID uint
 	if raw := c.Query("project_id"); raw != "" {
@@ -76,11 +77,12 @@ func (h *RecordingHandler) List(c *gin.Context) {
 			questionID = uint(v)
 		}
 	}
-	if projectID == 0 && questionID == 0 {
-		util.Fail(c, http.StatusBadRequest, constants.CodeBadRequest, "录音列表查询必须提供 project_id 或 question_id")
+	reviewStatus := c.Query("review_status")
+	if projectID == 0 && questionID == 0 && reviewStatus == "" {
+		util.Fail(c, http.StatusBadRequest, constants.CodeBadRequest, "录音列表查询必须提供 project_id、question_id 或 review_status")
 		return
 	}
-	recordings, err := h.recordingSvc.List(projectID, questionID)
+	recordings, err := h.recordingSvc.List(projectID, questionID, reviewStatus)
 	if err != nil {
 		c.Error(err)
 		return
@@ -113,8 +115,8 @@ func (h *RecordingHandler) Update(c *gin.Context) {
 	util.OKMessage(c, constants.MsgRecordingUpdated, recording)
 }
 
-// UpdateSummary 更新录音一句话摘要。
-func (h *RecordingHandler) UpdateSummary(c *gin.Context) {
+// SubmitSummary 采访员提交摘要进入待审（退回后补充内容也走这里重新提交）。
+func (h *RecordingHandler) SubmitSummary(c *gin.Context) {
 	actor, err := middleware.CurrentUser(c)
 	if err != nil {
 		c.Error(err)
@@ -124,20 +126,64 @@ func (h *RecordingHandler) UpdateSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Summary string `json:"summary" binding:"required,max=512"`
-	}
+	var req dto.SubmitSummaryRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	recording, err := h.recordingSvc.UpdateSummary(actor, id, req.Summary)
+	recording, err := h.recordingSvc.SubmitSummary(actor, id, req.Summary)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary", "recording", recording.ID,
-		"更新录音摘要 "+req.Summary, c.ClientIP(), middleware.RequestID(c))
-	util.OKMessage(c, constants.MsgRecordingUpdated, recording)
+	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary_submit", "recording", recording.ID,
+		"提交摘要审核 "+req.Summary, c.ClientIP(), middleware.RequestID(c))
+	util.OKMessage(c, constants.MsgSummarySubmitted, recording)
+}
+
+// ApproveSummary 档案员批准待审摘要。
+func (h *RecordingHandler) ApproveSummary(c *gin.Context) {
+	actor, err := middleware.CurrentUser(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	recording, err := h.recordingSvc.ApproveSummary(actor, id)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary_approve", "recording", recording.ID,
+		"批准摘要 "+recording.Summary, c.ClientIP(), middleware.RequestID(c))
+	util.OKMessage(c, constants.MsgSummaryApproved, recording)
+}
+
+// RejectSummary 档案员退回待审摘要并填写原因。
+func (h *RecordingHandler) RejectSummary(c *gin.Context) {
+	actor, err := middleware.CurrentUser(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.RejectSummaryRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	recording, err := h.recordingSvc.RejectSummary(actor, id, req.Reason)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	h.auditSvc.Record(actor.ID, actor.Username, actor.Role, "recording.summary_reject", "recording", recording.ID,
+		"退回摘要，原因："+req.Reason, c.ClientIP(), middleware.RequestID(c))
+	util.OKMessage(c, constants.MsgSummaryRejected, recording)
 }
 
 // UploadAudio 上传录音文件到 MinIO 并关联到录音记录。

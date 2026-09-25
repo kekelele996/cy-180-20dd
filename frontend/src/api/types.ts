@@ -1,5 +1,5 @@
 // 与后端 model/dto 对应的类型定义。
-import type { ProjectStatus, RecordingStatus, Role } from '../constants'
+import type { ProjectStatus, RecordingStatus, ReviewStatus, Role } from '../constants'
 
 export interface User {
   id: number
@@ -45,6 +45,9 @@ export interface Recording {
   audio_key: string
   duration_seconds: number
   summary: string
+  review_status: ReviewStatus
+  pending_summary: string
+  reject_reason: string
   status: RecordingStatus
   created_by: number
   created_at: string

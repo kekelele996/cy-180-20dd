@@ -4,11 +4,14 @@ import { useNavigate, useParams } from 'react-router-dom'
 import AudioPlayer from '../../components/AudioPlayer'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import EmptyState from '../../components/EmptyState'
+import ReviewBadge from '../../components/ReviewBadge'
 import StatusBadge from '../../components/StatusBadge'
 import {
   PROJECT_STATUS_ARCHIVED,
   PROJECT_STATUS_COMPLETED,
   PROJECT_STATUS_IN_PROGRESS,
+  REVIEW_STATUS_PENDING,
+  REVIEW_STATUS_REJECTED,
 } from '../../constants'
 import { useProjectStore } from '../../stores/projectStore'
 import { useQuestionStore } from '../../stores/questionStore'
@@ -193,13 +196,20 @@ function TimelineItem({
         <div className="timeline-head">
           <span className="timeline-q">{question ? `问题：${question.content}` : `问题 #${recording.question_id}`}</span>
           <StatusBadge status={recording.status} type="recording" />
+          <ReviewBadge status={recording.review_status} />
           <span className="timeline-duration">{formatDuration(recording.duration_seconds)}</span>
         </div>
         <AudioPlayer recordingId={recording.id} durationSeconds={recording.duration_seconds} />
         <div className="timeline-summary">
           <span className="summary-label">一句话摘要：</span>
-          {recording.summary || <span className="muted">暂无摘要</span>}
+          {recording.summary || <span className="muted">暂无已通过摘要</span>}
         </div>
+        {recording.review_status === REVIEW_STATUS_PENDING && (
+          <div className="muted">新版本摘要正在审核中，时间线当前显示上一版，审核通过后自动切换。</div>
+        )}
+        {recording.review_status === REVIEW_STATUS_REJECTED && (
+          <div className="muted">新版本摘要已被退回补充，时间线当前显示上一版。</div>
+        )}
         {markers.length > 0 && (
           <div className="marker-list">
             {markers.map((m) => (
